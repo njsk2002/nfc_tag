@@ -1,0 +1,58 @@
+plugins {
+    id "com.android.application"
+    //id "kotlin-android"  //코틀린관련 주석 20241228
+    // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
+    id "dev.flutter.flutter-gradle-plugin"
+}
+
+android {
+    namespace = "kr.co.daram.nfc_tag"
+    compileSdkVersion 35 // Flutter의 compileSdkVersion 사용
+    ndkVersion = flutter.ndkVersion // Flutter NDK 버전 사용
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
+//    kotlinOptions {
+//        jvmTarget = "17" // Kotlin JVM 타겟 설정
+//    }  //코틀린관련 주석 20241228
+
+    defaultConfig {
+        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
+        applicationId = "kr.co.daram.nfc_tag"
+        // You can update the following values to match your application needs.
+        // For more information, see: https://flutter.dev/to/review-gradle-config.
+        minSdkVersion 26 // Flutter 기본 설정
+        targetSdkVersion 34 // Flutter 기본 설정
+//        versionCode flutter.versionCode // Flutter 버전 코드
+//        versionName flutter.versionName // Flutter 버전 이름
+        versionCode 1
+        versionName "1.0"
+        // 추가적인 설정
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    buildTypes {
+        release {
+            // TODO: Add your own signing config for the release build.
+            // Signing with the debug keys for now, so `flutter run --release` works.
+            signingConfig = signingConfigs.debug
+        }
+    }
+}
+
+dependencies {
+    //implementation "org.jetbrains.kotlin:kotlin-stdlib:1.9.10" //코틀린관련 주석 20241228
+    implementation "androidx.core:core-ktx:1.10.1"
+    // 기타 Flutter 프로젝트에 필요한 종속성 추가
+    implementation fileTree(dir: 'libs', include: ['*.jar']) // libs 디렉토리의 모든 .jar 파일 포함
+    //implementation files('libs/NFC200717.jar')
+    implementation 'androidx.appcompat:appcompat:1.6.1' // 최신 버전
+}
+
+
+flutter {
+    source = "../.."
+}
