@@ -63,28 +63,20 @@ public class MainActivity extends FlutterActivity {
         Log.d("NFC", "Available technologies: " + Arrays.toString(tag.getTechList()));
 
         try {
+            // nfcLibrary 인스턴스 생성
             waveshare.feng.nfctag.activity.a nfcLibrary = new waveshare.feng.nfctag.activity.a();
             NfcA nfcA = NfcA.get(tag);
 
-            // 모든 활성 기술 닫기
-            closeOtherTechnologies(tag);
-
-            // NFC 연결 시도
-            try {
-                Log.d("NFC", "Attempting to connect to NFC tag...");
-                nfcA.connect();
-                Log.d("NFC", "NFC tag connected successfully");
-            } catch (IOException e) {
-                Log.e("NFC", "Failed to connect to NFC tag", e);
-                if (!hasReplied) {
-                    result.error("NFC_ERROR", "Failed to connect to NFC tag: " + e.getMessage(), null);
-                    hasReplied = true;
-                }
+            if (nfcA == null) {
+                Log.e("NFC", "NfcA object is null. Tag may not support NfcA.");
+                result.error("NFC_ERROR", "Tag does not support NfcA", null);
                 return;
             }
 
-            // NFC 초기화
-            int initResponse = nfcLibrary.a(nfcA);
+            // nfcLibrary를 통해 NFC 초기화 및 연결 처리
+            Log.d("NFC", "Initializing and connecting to NFC tag using nfcLibrary...");
+            int initResponse = nfcLibrary.a(nfcA); // 내부에서 connect() 호출
+
             if (initResponse != 1) {
                 Log.e("NFC", "NFC initialization failed with code: " + initResponse);
                 if (!hasReplied) {
@@ -93,7 +85,8 @@ public class MainActivity extends FlutterActivity {
                 }
                 return;
             }
-            Log.d("NFC", "NFC initialized successfully");
+
+            Log.d("NFC", "NFC initialized and connected successfully using nfcLibrary.");
 
             // 이미지 데이터 전송
             Bitmap bitmap = BitmapFactory.decodeStream(new ByteArrayInputStream(imageData));
@@ -140,6 +133,7 @@ public class MainActivity extends FlutterActivity {
             }
         }
     }
+
 
     private void closeOtherTechnologies(Tag tag) {
         String[] techList = tag.getTechList();
