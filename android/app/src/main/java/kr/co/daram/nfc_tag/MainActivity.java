@@ -4,16 +4,19 @@ import android.content.DialogInterface;
 import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.Color;
 import android.nfc.NfcAdapter;
 import android.nfc.Tag;
 import android.nfc.tech.NfcA;
 import android.util.Log;
+import android.app.PendingIntent;
+import android.content.IntentFilter;
+
 import androidx.appcompat.app.AlertDialog;
 import io.flutter.embedding.android.FlutterActivity;
 import io.flutter.embedding.engine.FlutterEngine;
 import io.flutter.plugin.common.MethodChannel;
 import java.io.ByteArrayInputStream;
-import java.io.IOException;
 import java.util.Arrays;
 
 public class MainActivity extends FlutterActivity {
@@ -29,9 +32,17 @@ public class MainActivity extends FlutterActivity {
                 .setMethodCallHandler((call, result) -> {
                     if ("startNFCProcess".equals(call.method)) {
                         byte[] imageData = call.argument("imageData");
+                        int displaySize = call.argument("displaySize");
+
                         if (imageData == null) {
                             Log.e("NFC", "Image data is null");
                             result.error("INVALID_ARGUMENT", "Image data is null", null);
+                            return;
+                        }
+
+                        if (displaySize < 0 || displaySize > 9) {
+                            Log.e("NFC", "Invalid display size");
+                            result.error("INVALID_ARGUMENT", "Invalid display size", null);
                             return;
                         }
 
@@ -42,17 +53,15 @@ public class MainActivity extends FlutterActivity {
                         }
 
                         Log.d("NFC", "NFC Reader Mode Enabled");
-                        nfcAdapter.enableReaderMode(this, tag -> handleTag(tag, imageData, result),
-                                NfcAdapter.FLAG_READER_NFC_A, null);
+                        nfcAdapter.enableReaderMode(this, tag -> handleTag(tag, imageData, displaySize, result),
+                                NfcAdapter.FLAG_READER_NFC_A | NfcAdapter.FLAG_READER_SKIP_NDEF_CHECK, null);
                     } else {
                         result.notImplemented();
                     }
                 });
     }
 
-    private void handleTag(Tag tag, byte[] imageData, MethodChannel.Result result) {
-        boolean hasReplied = false; // 중복 호출 방지 플래그
-
+    private void handleTag(Tag tag, byte[] imageData, int displaySize, MethodChannel.Result result) {
         if (tag == null) {
             Log.e("NFC", "No tag detected");
             result.error("NFC_ERROR", "No NFC tag detected", null);
@@ -62,10 +71,10 @@ public class MainActivity extends FlutterActivity {
         Log.d("NFC", "Tag detected: " + tag.toString());
         Log.d("NFC", "Available technologies: " + Arrays.toString(tag.getTechList()));
 
+        NfcA nfcA = null;
         try {
-            // nfcLibrary 인스턴스 생성
             waveshare.feng.nfctag.activity.a nfcLibrary = new waveshare.feng.nfctag.activity.a();
-            NfcA nfcA = NfcA.get(tag);
+            nfcA = NfcA.get(tag);
 
             if (nfcA == null) {
                 Log.e("NFC", "NfcA object is null. Tag may not support NfcA.");
@@ -73,67 +82,61 @@ public class MainActivity extends FlutterActivity {
                 return;
             }
 
-            // nfcLibrary를 통해 NFC 초기화 및 연결 처리
+            closeOtherTechnologies(tag);
+
             Log.d("NFC", "Initializing and connecting to NFC tag using nfcLibrary...");
-            int initResponse = nfcLibrary.a(nfcA); // 내부에서 connect() 호출
+            int initResponse = nfcLibrary.a(nfcA);
 
             if (initResponse != 1) {
                 Log.e("NFC", "NFC initialization failed with code: " + initResponse);
-                if (!hasReplied) {
-                    result.error("NFC_ERROR", "NFC initialization failed", null);
-                    hasReplied = true;
-                }
+                result.error("NFC_ERROR", "NFC initialization failed", null);
                 return;
             }
 
             Log.d("NFC", "NFC initialized and connected successfully using nfcLibrary.");
 
-            // 이미지 데이터 전송
-            Bitmap bitmap = BitmapFactory.decodeStream(new ByteArrayInputStream(imageData));
+            try {
+                Thread.sleep(2000); // 1초 딜레이 추가
+            } catch (InterruptedException e) {
+                Log.e("NFC", "Thread sleep interrupted", e);
+            }
+
+            Bitmap bitmap = convertToEInkCompatible(BitmapFactory.decodeStream(new ByteArrayInputStream(imageData)));
             if (bitmap == null) {
-                Log.e("NFC", "Failed to decode image data");
-                if (!hasReplied) {
-                    result.error("BITMAP_ERROR", "Failed to decode image", null);
-                    hasReplied = true;
-                }
+                Log.e("NFC", "Failed to decode or convert image data");
+                result.error("BITMAP_ERROR", "Failed to decode or convert image", null);
                 return;
             }
 
-            Log.d("NFC", "Sending image data to NFC tag...");
-            int sendResponse = nfcLibrary.a(2, bitmap);
+            Log.d("NFC", "Starting data transmission...");
+            int sendResponse = nfcLibrary.a(displaySize, bitmap);
+
             if (sendResponse == 1) {
-                Log.d("NFC", "Image data sent successfully");
-                if (!hasReplied) {
-                    result.success(true);
-                    hasReplied = true;
-                }
+                Log.d("NFC", "Data transmission completed successfully.");
+                monitorProgress(nfcLibrary, tag, result); // `tag` 전달
             } else {
-                Log.e("NFC", "Failed to send image data, response code: " + sendResponse);
-                if (!hasReplied) {
-                    result.error("NFC_ERROR", "Failed to send image data, response code: " + sendResponse, null);
-                    hasReplied = true;
-                }
+                Log.e("NFC", "Data transmission failed with response: " + sendResponse);
+                result.error("TRANSMISSION_ERROR", "Data transmission failed", null);
+                closeOtherTechnologies(tag); // 실패 시 기술 닫기
+                disableNFCReaderMode();
             }
         } catch (Exception e) {
             Log.e("NFC", "Error during NFC operation", e);
-            if (!hasReplied) {
-                result.error("NFC_ERROR", "Error: " + e.getMessage(), null);
-                hasReplied = true;
-            }
+            result.error("NFC_ERROR", "Error: " + e.getMessage(), null);
         } finally {
-            // NFC 태그 연결 해제
             try {
-                NfcA nfcA = NfcA.get(tag);
                 if (nfcA != null && nfcA.isConnected()) {
                     nfcA.close();
                     Log.d("NFC", "NFC tag connection closed");
                 }
-            } catch (IOException e) {
+            } catch (Exception e) {
                 Log.e("NFC", "Failed to close NFC tag connection", e);
             }
+
+            disableNFCForegroundDispatch();
+            disableNFCReaderMode();
         }
     }
-
 
     private void closeOtherTechnologies(Tag tag) {
         String[] techList = tag.getTechList();
@@ -172,5 +175,90 @@ public class MainActivity extends FlutterActivity {
                 })
                 .setNegativeButton("Cancel", null)
                 .show();
+    }
+
+    private void monitorProgress(waveshare.feng.nfctag.activity.a nfcLibrary, Tag tag, MethodChannel.Result result) {
+        new Thread(() -> {
+            try {
+                boolean isCompleted = false;
+
+                while (!isCompleted) {
+                    int progress = nfcLibrary.a();
+                    Log.d("NFC", "Progress: " + progress);
+
+                    if (progress == 100) {
+                        Log.d("NFC", "Data transmission completed.");
+                        result.success(true);
+                        isCompleted = true;
+                        closeOtherTechnologies(tag); // 완료 후 기술 닫기
+                        disableNFCReaderMode();
+                    } else if (progress < 0) {
+                        Log.e("NFC", "Error occurred during transmission monitoring.");
+                        result.error("TRANSMISSION_ERROR", "Error occurred while monitoring progress", null);
+                        isCompleted = true;
+                    }
+
+                    Thread.sleep(500);
+                }
+            } catch (Exception e) {
+                Log.e("NFC", "Error during progress monitoring", e);
+                result.error("MONITORING_ERROR", "Error during progress monitoring: " + e.getMessage(), null);
+            } finally {
+                disableNFCReaderMode();
+            }
+        }).start();
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        enableNFCForegroundDispatch();
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        disableNFCForegroundDispatch();
+    }
+
+    private void enableNFCForegroundDispatch() {
+        if (nfcAdapter != null) {
+            Intent intent = new Intent(this, getClass()).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
+            PendingIntent pendingIntent = PendingIntent.getActivity(this, 0, intent, PendingIntent.FLAG_MUTABLE);
+            IntentFilter[] filters = new IntentFilter[] { new IntentFilter(NfcAdapter.ACTION_TECH_DISCOVERED) };
+            String[][] techList = new String[][] { new String[] { NfcA.class.getName() } };
+            nfcAdapter.enableForegroundDispatch(this, pendingIntent, filters, techList);
+            Log.d("NFC", "Foreground Dispatch Enabled");
+        }
+    }
+
+    private void disableNFCForegroundDispatch() {
+        if (nfcAdapter != null) {
+            nfcAdapter.disableForegroundDispatch(this);
+            Log.d("NFC", "Foreground Dispatch Disabled");
+        }
+    }
+
+
+
+
+
+    private void disableNFCReaderMode() {
+        if (nfcAdapter != null) {
+            nfcAdapter.disableReaderMode(this);
+            Log.d("NFC", "NFC Reader Mode Disabled");
+        }
+    }
+
+    private Bitmap convertToEInkCompatible(Bitmap original) {
+        Bitmap converted = Bitmap.createBitmap(original.getWidth(), original.getHeight(), Bitmap.Config.ARGB_8888);
+        for (int y = 0; y < original.getHeight(); y++) {
+            for (int x = 0; x < original.getWidth(); x++) {
+                int color = original.getPixel(x, y);
+                int gray = (int) (0.299 * ((color >> 16) & 0xff) + 0.587 * ((color >> 8) & 0xff) + 0.114 * (color & 0xff));
+                converted.setPixel(x, y, gray > 128 ? Color.WHITE : Color.BLACK);
+            }
+        }
+        return converted;
     }
 }
